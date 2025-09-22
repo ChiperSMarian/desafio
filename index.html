@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Simulación de ataque — Peligrosidad</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; background:#fafafa; color:#222; }
+    button, select, input { padding: 0.6rem 1rem; font-size: 1rem; border-radius:6px; border: 1px solid #ccc; background: #fff; }
+    button { cursor: pointer; }
+    .row { display:flex; gap:0.75rem; align-items:center; flex-wrap: wrap; margin-bottom:0.5rem; }
+    .card { margin-top: 1rem; border: 1px solid #e6e6e6; border-radius: 10px; padding: 1rem; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.03); }
+    .grid { display: grid; grid-template-columns: 160px 1fr; gap: 0.5rem 1rem; align-items: center; }
+    .label { font-weight: 700; color: #444; }
+    .muted { color: #666; font-size: 0.95rem; }
+    .pill { display:inline-block; padding: 6px 10px; border-radius: 999px; font-weight:700; color:#fff; }
+    .small { font-size: 0.9rem; color: #444; }
+    pre { white-space: pre-wrap; word-wrap: break-word; font-size: 0.9rem; background:#f7f7f7; padding:8px; border-radius:6px; border:1px solid #eee; }
+    .controls { margin-top: 0.5rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; }
+    .muted-note { color:#666; font-size:0.9rem; margin-top:0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Simulación de ataque — Peligrosidad</h1>
+  <p class="muted">Elige el tipo de ataque y el origen de la IP, pulsa para generar <strong>una</strong> alerta. Se guardará (CSV y BD) y verás la respuesta del servidor.</p>
+
+  <div class="card">
+    <div class="row">
+      <label for="attackType" class="label">Tipo de ataque:</label>
+      <select id="attackType" aria-label="Tipo de ataque">
+        <option value="bruteforce" selected>Fuerza bruta (bruteforce)</option>
+        <option value="dos">DoS (tabla alertas_dos)</option>
+        <option value="ddos">DDoS (tabla alertas_ddos)</option>
+        <option value="login">Login sospechoso (alertas_login_sospechoso)</option>
+        <option value="phishing">Phishing (alertas_phishing)</option>
+      </select>
+
+      <label for="source" class="label">Origen IP:</label>
+      <select id="source" aria-label="Origen de IP">
+        <option value="any" selected>Cualquiera (50% malas)</option>
+        <option value="bad">Solo malas (ip_malas)</option>
+        <option value="good">Solo aleatorias públicas</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label for="badprob" class="label">Prob. malas (0–1):</label>
+      <input type="number" id="badprob" min="0" max="1" step="0.05" value="0.5" style="width:6rem;" />
+      <label for="enrich" class="label">Enriquecer (VT/Abuse/OTX):</label>
+      <select id="enrich" aria-label="Enriquecer">
+        <option value="1" selected>Sí</option>
+        <option value="0">No</option>
+      </select>
+
+      <div style="margin-left:auto;">
+        <button id="btn">Generar simulación</button>
+      </div>
+    </div>
+
+    <div class="muted-note">Nota: el parámetro <code>type</code> que envía esta UI es el que tu backend (app.py) ya acepta. Las opciones <code>dos</code> y <code>ddos</code> son distintas y cada una inserta en su tabla correspondiente.</div>
+  </div>
+
+  <div id="resultado" class="card" style="display:none;">
+    <h3>Resultado</h3>
+    <div class="grid">
+      <div class="label">Fecha</div>       <div id="fecha">—</div>
+      <div class="label">Hora</div>        <div id="hora">—</div>
+      <div class="label">Tipo de alerta</div> <div id="tipo">—</div>
+      <div class="label">IP</div>          <div id="ip">—</div>
+      <div class="label">Detalle</div>     <div id="detalle">—</div>
+      <div class="label">Resultado servidor</div> <div id="raw">—</div>
+    </div>
+
+    <h4 style="margin-top:1rem">JSON completo (respuesta):</h4>
+    <pre id="jsonraw">{}</pre>
+  </div>
+
+  <div id="error" class="card" style="display:none; border-color:#f8d7da; color:#6b0008;">
+    <strong>Error:</strong>
+    <div id="errmsg">—</div>
+  </div>
+
+<script>
+  const btn = document.getElementById('btn');
+  const resultado = document.getElementById('resultado');
+  const errorBox = document.getElementById('error');
+
+  btn.addEventListener('click', async () => {
+    // Lectura controles
+    const type = document.getElementById('attackType').value;   // -> type param
+    const source = document.getElementById('source').value;
+    const badprob = document.getElementById('badprob').value;
+    const enrich = document.getElementById('enrich').value;
+
+    // Construir URL: /random-alert?type=...&ip_source=...&bad_prob=...&with_enrichment=...
+    const params = new URLSearchParams({
+      type: type,
+      ip_source: source,
+      bad_prob: String(badprob),
+      with_enrichment: (enrich === "1") ? "true" : "false"
+    });
+
+    const url = `/random-alert?${params.toString()}`;
+
+    // UI: indicar que se está solicitando
+    btn.disabled = true;
+    btn.textContent = 'Generando...';
+
+    try {
+      const resp = await fetch(url, { method: 'GET' });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        // Mostrar error
+        errorBox.style.display = 'block';
+        document.getElementById('errmsg').textContent = JSON.stringify(data, null, 2);
+        resultado.style.display = 'none';
+      } else {
+        errorBox.style.display = 'none';
+        resultado.style.display = 'block';
+
+        // Mostrar valores clave según tipo
+        document.getElementById('fecha').textContent = (data.alerta && data.alerta.fecha) || '—';
+        document.getElementById('hora').textContent = (data.alerta && data.alerta.hora) || '—';
+        document.getElementById('tipo').textContent = type;
+        document.getElementById('ip').textContent = (data.alerta && data.alerta.ip) || (data.alerta && data.alerta.url) || '—';
+
+        // Formatear detalle: según tipo mostrar campos importantes
+        let detalle = '';
+        if (type === 'bruteforce') {
+          detalle = `target=${data.alerta.target || '—'}, intentos=${data.alerta.intentos || '—'}, ratio=${data.alerta.ratio || '—'}`;
+        } else if (type === 'dos') {
+          detalle = `requests=${data.alerta.requests || '—'}, ratio=${data.alerta.ratio || '—'}`;
+        } else if (type === 'ddos') {
+          detalle = `sources=${data.alerta.sources || '—'}, requests=${data.alerta.requests || '—'}, ratio=${data.alerta.ratio || '—'}`;
+        } else if (type === 'login') {
+          detalle = `usuario=${data.alerta.usuario || '—'}, intentos=${data.alerta.intentos || '—'}, ratio_intentos=${data.alerta.ratio_intentos || '—'}`;
+        } else if (type === 'phishing') {
+          detalle = `url=${data.alerta.url || '—'}, resultado=${data.alerta.resultado || data.alerta.risk_level || '—'}`;
+        } else {
+          detalle = JSON.stringify(data.alerta || {}, null, 2);
+        }
+
+        document.getElementById('detalle').textContent = detalle;
+        document.getElementById('raw').textContent = data.log_line || '—';
+        document.getElementById('jsonraw').textContent = JSON.stringify(data, null, 2);
+      }
+
+    } catch (err) {
+      errorBox.style.display = 'block';
+      document.getElementById('errmsg').textContent = String(err);
+      resultado.style.display = 'none';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Generar simulación';
+    }
+  });
+</script>
+</body>
+</html>
